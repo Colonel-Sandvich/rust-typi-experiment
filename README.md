@@ -23,10 +23,6 @@ if (x !== undefined) {
 Demand the type of x in the if statement:
 Then it's recomputed as `x: Number | String`
 
-# Language Agnostic
-
-Try my best to make this language agnostic type checking. Languages will provide type changing statements
-
 ## TS
 
 ```ts
