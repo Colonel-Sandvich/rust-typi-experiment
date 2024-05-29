@@ -1,12 +1,10 @@
-use std::{cmp::Ordering, collections::BTreeSet};
+use std::{cmp::Ordering, collections::BTreeSet, fmt::Display};
 
 use derive_more::From;
-use oxc::ast::ast::TSLiteral;
+use oxc::ast::ast::{Expression, TSLiteral};
 use serde::Serialize;
-use strum::Display;
 
-#[derive(Debug, Display, PartialEq, From, Serialize, Clone, PartialOrd, Ord, Eq)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, PartialEq, From, Serialize, Clone, PartialOrd, Ord, Eq)]
 pub enum TSType {
     // Primitives
     Any,
@@ -48,6 +46,17 @@ pub enum TSType {
     // JSDoc
     // JSDocNullableType(Box<'a, JSDocNullableType<'a>>),
     // JSDocUnknownType(Box<'a, JSDocUnknownType>),
+}
+
+impl Display for TSType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use TSType::*;
+
+        match self {
+            Array(x) => write!(f, "{}[]", x),
+            _ => f.write_str(format!("{:?}", self).to_lowercase().as_str()),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize, From, Clone, PartialOrd, Ord, Eq)]
@@ -106,6 +115,10 @@ impl Signature {
             }
         }
     }
+
+    pub fn is_assignable_to(&self, other: &Self) -> bool {
+        self.extends(other)
+    }
 }
 
 impl TSType {
@@ -129,6 +142,12 @@ impl TSType {
             return parent == *other;
         }
 
+        if let TSType::Array(left) = self
+            && let TSType::Array(right) = other
+        {
+            return left.extends(&right);
+        }
+
         if matches!(self, TSType::TypeLiteral(_)) && other == &TSType::Object {
             return true;
         }
@@ -145,6 +164,55 @@ impl TSType {
 
         if let TSType::Intersection(intersection) = other {
             return intersection.iter().all(|x| self.extends(x));
+        }
+
+        false
+    }
+
+    pub fn is_assignable_to(&self, other: &Self) -> bool {
+        if *other == TSType::Any {
+            return true;
+        }
+
+        if *self == *other {
+            return true;
+        }
+
+        if let TSType::Literal(literal) = self {
+            let parent = match literal {
+                Literal::Boolean(_) => TSType::Boolean,
+                Literal::Numeric(_) => TSType::Number,
+                Literal::String(_) => TSType::String,
+                Literal::Array(_) => TSType::Array(TSType::Any.into()),
+            };
+
+            return parent == *other;
+        }
+
+        if let TSType::Array(_) = self
+            && let TSType::Array(_) = other
+        {
+            return true;
+        }
+
+        if matches!(self, TSType::TypeLiteral(_)) && other == &TSType::Object {
+            return true;
+        }
+
+        if let TSType::TypeLiteral(child) = self
+            && let TSType::TypeLiteral(parent) = other
+        {
+            return parent
+                .iter()
+                .all(|x| child.iter().any(|c| c.is_assignable_to(x)));
+        }
+
+        if let TSType::Union(union) = other {
+            return union.iter().any(|x| self.is_assignable_to(x));
+        }
+
+        if let TSType::Intersection(intersection) = other {
+            return intersection.iter().all(|x| self.is_assignable_to(x));
         }
 
         false
@@ -298,4 +366,8 @@ pub fn oxc_property_key_to_local(property: &oxc::ast::ast::PropertyKey) -> Prope
         Identifier(p) => IdentifierName(p.name.to_string()).into(),
         _ => todo!(),
     }
+}
+
+pub fn is_const_type_reference(expr: &Expression) -> bool {
+    matches!(expr, Expression::TSAsExpression(x) if x.type_annotation.is_const_type_reference())
 }
